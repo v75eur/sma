@@ -101,7 +101,6 @@ def detect_cross(sma3, sma10):
     if len(sma3) < 2 or len(sma10) < 2:
         return None, False
     
-    # Derniers croisements
     if sma3[-1] is None or sma10[-1] is None or sma3[-2] is None or sma10[-2] is None:
         return None, False
     
@@ -227,29 +226,44 @@ def analyze_sma(key, info):
         conseil = "📉 VENTE (H4 BAISSIER + H1 BAS)"
         condition_remplie = True
     
-    if condition_remplie:
-        full_msg = f"{msg}\n\n💰 Prix: {cp:.{dec}f}\n📊 Tendance H4: {tendance_icon} {tendance_h4}\n🕒 {h}H Bénin\n🤖 SMA Bot"
-        
-        log(f"📤 ENVOI ÉVÉNEMENT {key}...")
-        send(info["ntfy"], f"🚨 {key} - {conseil}", full_msg)
-        
-        time.sleep(1)
-        
-        # Graphique H4
-        log(f"📤 Graphique H4 pour {key}...")
-        img_h4 = chart_sma(candles_h4, sma3_h4, sma10_h4, f"{info['name']} H4", cp, dec)
-        if img_h4:
-            send(info["ntfy"], f"{key} H4 - {conseil}", "SMA H4 (3,10)", img_h4)
-        
-        time.sleep(1)
-        
-        # Graphique H1
-        log(f"📤 Graphique H1 pour {key}...")
-        img_h1 = chart_sma(candles_h1, sma3_h1, sma10_h1, f"{info['name']} H1", cp, dec)
-        if img_h1:
-            send(info["ntfy"], f"{key} H1 - {conseil}", "SMA H1 (3,10)", img_h1)
-    else:
-        log(f"⏭️ RIEN NE SE PASSE POUR {key} - SILENCE")
+    # ===== RAPPORT SYSTÉMATIQUE (AVEC OU SANS SIGNAL) =====
+    if not condition_remplie:
+        msg = "📊 Rapport SMA Horaire"
+        if tendance_h4 == "HAUSSIERE":
+            msg += f"\n📈 Tendance H4: HAUSSIERE (SMA 3 > SMA 10)"
+        elif tendance_h4 == "BAISSIERE":
+            msg += f"\n📉 Tendance H4: BAISSIERE (SMA 3 < SMA 10)"
+        else:
+            msg += f"\n📊 Tendance H4: NEUTRE"
+        if cross_h1:
+            if direction_h1 == "HAUT":
+                msg += f"\n⚠️ Croisement HAUT sur H1 mais tendance H4 {tendance_h4} (pas aligné)"
+            else:
+                msg += f"\n⚠️ Croisement BAS sur H1 mais tendance H4 {tendance_h4} (pas aligné)"
+        else:
+            msg += f"\n🔍 Pas de signal H1 pour le moment"
+        conseil = "📊 Rapport Horaire"
+    
+    full_msg = f"{msg}\n\n💰 Prix: {cp:.{dec}f}\n🕒 {h}H Bénin\n🤖 SMA Bot"
+    
+    log(f"📤 ENVOI RAPPORT {key}...")
+    send(info["ntfy"], f"{key} - {conseil}", full_msg)
+    
+    time.sleep(1)
+    
+    # Graphique H4
+    log(f"📤 Graphique H4 pour {key}...")
+    img_h4 = chart_sma(candles_h4, sma3_h4, sma10_h4, f"{info['name']} H4", cp, dec)
+    if img_h4:
+        send(info["ntfy"], f"{key} H4 - {conseil}", "SMA H4 (3,10)", img_h4)
+    
+    time.sleep(1)
+    
+    # Graphique H1
+    log(f"📤 Graphique H1 pour {key}...")
+    img_h1 = chart_sma(candles_h1, sma3_h1, sma10_h1, f"{info['name']} H1", cp, dec)
+    if img_h1:
+        send(info["ntfy"], f"{key} H1 - {conseil}", "SMA H1 (3,10)", img_h1)
 
 if __name__ == "__main__":
     log("🚀 SMA BOT - Stratégie H4 + H1")
