@@ -22,15 +22,17 @@ def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 def send(url, title, msg, img=None):
+    # Supprimer les emojis du titre
+    title_clean = title.replace('🚨', '').replace('📈', '').replace('📉', '').replace('📊', '').replace('🔍', '').strip()
     for i in range(5):
         try:
-            h = {"Title": title}
+            h = {"Title": title_clean}
             if img:
                 h["Filename"] = "chart.png"
                 h["X-Message"] = msg
-                r = requests.post(url, data=img, headers={k: v.encode() for k, v in h.items()}, timeout=30)
+                r = requests.post(url, data=img, headers={k: v.encode('utf-8') for k, v in h.items()}, timeout=30)
             else:
-                r = requests.post(url, data=msg.encode(), headers=h, timeout=15)
+                r = requests.post(url, data=msg.encode('utf-8'), headers=h, timeout=15)
             if r.status_code == 200:
                 log(f"✅ {title}")
                 return True
@@ -165,30 +167,28 @@ def analyze_sma(key, info):
     conseil = ""
     condition_remplie = False
 
-    # ===== DÉTECTION DES SIGNAL =====
     if cross_h2:
         if direction_h2 == "HAUT":
-            conseil = "🔍 Tendance HAUSSIERE confirmée (H2)"
-            msg = f"📊 Tendance H2 DEVIENT HAUSSIERE\n✅ SMA 3 croise au-dessus de SMA 10"
+            conseil = "Tendance HAUSSIERE confirmee (H2)"
+            msg = f"Tendance H2 DEVIENT HAUSSIERE\nSMA 3 croise au-dessus de SMA 10"
         elif direction_h2 == "BAS":
-            conseil = "🔍 Tendance BAISSIERE confirmée (H2)"
-            msg = f"📊 Tendance H2 DEVIENT BAISSIERE\n✅ SMA 3 croise en dessous de SMA 10"
+            conseil = "Tendance BAISSIERE confirmee (H2)"
+            msg = f"Tendance H2 DEVIENT BAISSIERE\nSMA 3 croise en dessous de SMA 10"
         condition_remplie = True
     elif cross_m15 and direction_m15 == "HAUT" and tendance_h2 == "HAUSSIERE":
-        conseil = "📈 ACHAT (H2 HAUSSIER + M15 HAUT)"
-        msg = f"📈 SIGNAL ACHAT SMA\n✅ Tendance HAUSSIERE (H2) confirmée\n✅ SMA 3 croise au-dessus SMA 10 sur M15"
+        conseil = "ACHAT (H2 HAUSSIER + M15 HAUT)"
+        msg = f"SIGNAL ACHAT SMA\nTendance HAUSSIERE (H2) confirmee\nSMA 3 croise au-dessus SMA 10 sur M15"
         condition_remplie = True
     elif cross_m15 and direction_m15 == "BAS" and tendance_h2 == "BAISSIERE":
-        conseil = "📉 VENTE (H2 BAISSIER + M15 BAS)"
-        msg = f"📉 SIGNAL VENTE SMA\n✅ Tendance BAISSIERE (H2) confirmée\n✅ SMA 3 croise en dessous SMA 10 sur M15"
+        conseil = "VENTE (H2 BAISSIER + M15 BAS)"
+        msg = f"SIGNAL VENTE SMA\nTendance BAISSIERE (H2) confirmee\nSMA 3 croise en dessous SMA 10 sur M15"
         condition_remplie = True
 
-    # ===== SI SIGNAL, ON ENVOIE TEXTE + GRAPHIQUES =====
     if condition_remplie:
-        full_msg = f"{msg}\n\n💰 Prix: {cp:.{dec}f}\n📊 Tendance H2: {tendance_h2}\n🕒 {datetime.now(pytz.timezone('Africa/Porto-Novo')).strftime('%H:%M')}H Bénin\n🤖 SMA Bot"
+        full_msg = f"{msg}\n\nPrix: {cp:.{dec}f}\nTendance H2: {tendance_h2}\n{datetime.now(pytz.timezone('Africa/Porto-Novo')).strftime('%H:%M')}H Benin\nSMA Bot"
         
         log(f"📤 ENVOI TEXTE {key} - {conseil}")
-        send(info["ntfy"], f"🚨 {key} - {conseil}", full_msg)
+        send(info["ntfy"], f"ALERTE {key} - {conseil}", full_msg)
         
         time.sleep(1)
         
@@ -207,7 +207,7 @@ def analyze_sma(key, info):
         log(f"⏭️ SILENCE {key} - Pas de signal SMA")
 
 if __name__ == "__main__":
-    log("🚀 SMA BOT - Stratégie H2 + M15")
+    log("🚀 SMA BOT - Strategie H2 + M15")
     now = datetime.now(pytz.timezone('Africa/Porto-Novo'))
     h, j = now.hour, now.weekday()
     log("→ V75 (7j/7)")
