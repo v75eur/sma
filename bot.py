@@ -97,13 +97,10 @@ def calc_sma(candles, period=3):
     return sma
 
 def detect_cross(sma3, sma10):
-    """Détecte le croisement entre SMA 3 et SMA 10"""
     if len(sma3) < 2 or len(sma10) < 2:
         return None, False
-    
     if sma3[-1] is None or sma10[-1] is None or sma3[-2] is None or sma10[-2] is None:
         return None, False
-    
     if sma3[-1] > sma10[-1] and sma3[-2] <= sma10[-2]:
         return "HAUT", True
     elif sma3[-1] < sma10[-1] and sma3[-2] >= sma10[-2]:
@@ -119,18 +116,14 @@ def chart_sma(candles, sma3, sma10, title, price, dec=2):
     fig.patch.set_facecolor('#0a0a0a')
     ax.set_facecolor('#0d1117')
     
-    # Chandeliers
     for i, c in enumerate(candles):
         col = '#26a69a' if c["c"] >= c["o"] else '#ef5350'
         ax.plot([i, i], [c["l"], c["h"]], color=col, lw=1.2)
         ax.add_patch(plt.Rectangle((i-0.35, min(c["o"], c["c"])), 0.7, abs(c["c"]-c["o"]) or 0.0001, facecolor=col, edgecolor=col))
     
-    # SMA 3
     ax.plot(range(len(sma3)), sma3, color='#00b4d8', lw=2, label='SMA 3')
-    # SMA 10
     ax.plot(range(len(sma10)), sma10, color='#ff6b6b', lw=2, label='SMA 10')
     
-    # Prix actuel
     ax.axhline(price, color='#f59e0b', ls='-.', lw=2, alpha=0.7)
     ax.text(len(candles)-1, price, f'  {price:.{dec}f}', color='#f59e0b', fontsize=12, fontweight='bold')
     
@@ -153,120 +146,119 @@ def analyze_sma(key, info):
     
     src = info.get("source", "yahoo")
     if src == "deriv":
-        candles_h4 = get_candles_deriv(info["symbol"], granularity=14400)
-        candles_h1 = get_candles_deriv(info["symbol"], granularity=3600)
+        candles_h2 = get_candles_deriv(info["symbol"], granularity=7200)  # 2h
+        candles_m10 = get_candles_deriv(info["symbol"], granularity=600)  # 10min
     else:
-        candles_h4 = get_candles(info["symbol"], interval="1h", range_days="60d")
-        if len(candles_h4) >= 4:
-            df = pd.DataFrame(candles_h4)
+        candles_h2 = get_candles(info["symbol"], interval="1h", range_days="60d")
+        if len(candles_h2) >= 2:
+            df = pd.DataFrame(candles_h2)
             df['t'] = pd.to_datetime(df['t'], unit='s')
             df.set_index('t', inplace=True)
-            resampled = df.resample('4H').agg({
+            resampled = df.resample('2H').agg({
                 'o': 'first', 'h': 'max', 'l': 'min', 'c': 'last'
             }).dropna()
-            candles_h4 = [{"t": int(ts.timestamp()), "o": row['o'], "h": row['h'], "l": row['l'], "c": row['c']} for ts, row in resampled.iterrows()]
-            candles_h4 = candles_h4[-50:]
-        candles_h1 = get_candles(info["symbol"], interval="1h", range_days="7d")
+            candles_h2 = [{"t": int(ts.timestamp()), "o": row['o'], "h": row['h'], "l": row['l'], "c": row['c']} for ts, row in resampled.iterrows()]
+            candles_h2 = candles_h2[-50:]
+        candles_m10 = get_candles(info["symbol"], interval="5m", range_days="7d")
     
-    if not candles_h4 or not candles_h1:
+    if not candles_h2 or not candles_m10:
         log(f"⚠️ Pas de données pour {key}")
         return
     
-    # Calcul des SMA H4
-    sma3_h4 = calc_sma(candles_h4, 3)
-    sma10_h4 = calc_sma(candles_h4, 10)
+    # Calcul des SMA H2
+    sma3_h2 = calc_sma(candles_h2, 3)
+    sma10_h2 = calc_sma(candles_h2, 10)
     
-    # Calcul des SMA H1
-    sma3_h1 = calc_sma(candles_h1, 3)
-    sma10_h1 = calc_sma(candles_h1, 10)
+    # Calcul des SMA M10
+    sma3_m10 = calc_sma(candles_m10, 3)
+    sma10_m10 = calc_sma(candles_m10, 10)
     
     # Détection des croisements
-    direction_h4, cross_h4 = detect_cross(sma3_h4, sma10_h4)
-    direction_h1, cross_h1 = detect_cross(sma3_h1, sma10_h1)
+    direction_h2, cross_h2 = detect_cross(sma3_h2, sma10_h2)
+    direction_m10, cross_m10 = detect_cross(sma3_m10, sma10_m10)
     
-    # Tendance H4 actuelle
-    if sma3_h4[-1] is not None and sma10_h4[-1] is not None:
-        if sma3_h4[-1] > sma10_h4[-1]:
-            tendance_h4 = "HAUSSIERE"
+    # Tendance H2 actuelle
+    if sma3_h2[-1] is not None and sma10_h2[-1] is not None:
+        if sma3_h2[-1] > sma10_h2[-1]:
+            tendance_h2 = "HAUSSIERE"
             tendance_icon = "📈"
         else:
-            tendance_h4 = "BAISSIERE"
+            tendance_h2 = "BAISSIERE"
             tendance_icon = "📉"
     else:
-        tendance_h4 = "NEUTRE"
+        tendance_h2 = "NEUTRE"
         tendance_icon = "📊"
     
     dec = info["dec"]
-    cp = candles_h1[-1]["c"]
+    cp = candles_m10[-1]["c"]
     h = datetime.now(pytz.timezone('Africa/Porto-Novo')).hour
+    minute = datetime.now(pytz.timezone('Africa/Porto-Novo')).minute
     
     msg = ""
     conseil = ""
     condition_remplie = False
+    signal_type = ""
     
-    # Cas 1 : Changement de tendance H4
-    if cross_h4:
-        if direction_h4 == "HAUT":
-            msg = f"📊 Tendance H4 DEVIENT HAUSSIERE\n✅ SMA 3 croise au-dessus de SMA 10"
-            conseil = "🔍 Tendance HAUSSIERE confirmée (H4)"
-        elif direction_h4 == "BAS":
-            msg = f"📊 Tendance H4 DEVIENT BAISSIERE\n✅ SMA 3 croise en dessous de SMA 10"
-            conseil = "🔍 Tendance BAISSIERE confirmée (H4)"
+    # Cas 1 : Changement de tendance H2
+    if cross_h2:
+        if direction_h2 == "HAUT":
+            signal_type = "CHANGEMENT TENDANCE HAUSSIERE"
+            msg = f"📊 Tendance H2 DEVIENT HAUSSIERE\n✅ SMA 3 croise au-dessus de SMA 10"
+            conseil = "🔍 Tendance HAUSSIERE confirmée (H2)"
+        elif direction_h2 == "BAS":
+            signal_type = "CHANGEMENT TENDANCE BAISSIERE"
+            msg = f"📊 Tendance H2 DEVIENT BAISSIERE\n✅ SMA 3 croise en dessous de SMA 10"
+            conseil = "🔍 Tendance BAISSIERE confirmée (H2)"
         condition_remplie = True
     
-    # Cas 2 : Signal d'achat H1 (tendance H4 HAUSSIERE + croisement HAUT H1)
-    elif cross_h1 and direction_h1 == "HAUT" and tendance_h4 == "HAUSSIERE":
-        msg = f"📈 SIGNAL ACHAT SMA\n✅ Tendance HAUSSIERE (H4) confirmée\n✅ SMA 3 croise au-dessus SMA 10 sur H1"
-        conseil = "📈 ACHAT (H4 HAUSSIER + H1 HAUT)"
+    # Cas 2 : Signal d'achat M10 (tendance H2 HAUSSIERE + croisement HAUT M10)
+    elif cross_m10 and direction_m10 == "HAUT" and tendance_h2 == "HAUSSIERE":
+        signal_type = "SIGNAL ACHAT"
+        msg = f"📈 SIGNAL ACHAT SMA\n✅ Tendance HAUSSIERE (H2) confirmée\n✅ SMA 3 croise au-dessus SMA 10 sur M10"
+        conseil = "📈 ACHAT (H2 HAUSSIER + M10 HAUT)"
         condition_remplie = True
     
-    # Cas 3 : Signal de vente H1 (tendance H4 BAISSIERE + croisement BAS H1)
-    elif cross_h1 and direction_h1 == "BAS" and tendance_h4 == "BAISSIERE":
-        msg = f"📉 SIGNAL VENTE SMA\n✅ Tendance BAISSIERE (H4) confirmée\n✅ SMA 3 croise en dessous SMA 10 sur H1"
-        conseil = "📉 VENTE (H4 BAISSIER + H1 BAS)"
+    # Cas 3 : Signal de vente M10 (tendance H2 BAISSIERE + croisement BAS M10)
+    elif cross_m10 and direction_m10 == "BAS" and tendance_h2 == "BAISSIERE":
+        signal_type = "SIGNAL VENTE"
+        msg = f"📉 SIGNAL VENTE SMA\n✅ Tendance BAISSIERE (H2) confirmée\n✅ SMA 3 croise en dessous SMA 10 sur M10"
+        conseil = "📉 VENTE (H2 BAISSIER + M10 BAS)"
         condition_remplie = True
     
-    # ===== RAPPORT SYSTÉMATIQUE (AVEC OU SANS SIGNAL) =====
-    if not condition_remplie:
-        msg = "📊 Rapport SMA Horaire"
-        if tendance_h4 == "HAUSSIERE":
-            msg += f"\n📈 Tendance H4: HAUSSIERE (SMA 3 > SMA 10)"
-        elif tendance_h4 == "BAISSIERE":
-            msg += f"\n📉 Tendance H4: BAISSIERE (SMA 3 < SMA 10)"
-        else:
-            msg += f"\n📊 Tendance H4: NEUTRE"
-        if cross_h1:
-            if direction_h1 == "HAUT":
-                msg += f"\n⚠️ Croisement HAUT sur H1 mais tendance H4 {tendance_h4} (pas aligné)"
+    # Cas 4 : Rien ne se passe (mais on envoie quand même un rapport)
+    else:
+        signal_type = "RAPPORT HORAIRE"
+        msg = f"📊 RAPPORT SMA\n📊 Tendance H2: {tendance_icon} {tendance_h2}"
+        if sma3_m10[-1] is not None and sma10_m10[-1] is not None:
+            if sma3_m10[-1] > sma10_m10[-1]:
+                msg += f"\n📊 M10: SMA3 > SMA10 (hausse courte)"
             else:
-                msg += f"\n⚠️ Croisement BAS sur H1 mais tendance H4 {tendance_h4} (pas aligné)"
-        else:
-            msg += f"\n🔍 Pas de signal H1 pour le moment"
-        conseil = "📊 Rapport Horaire"
+                msg += f"\n📊 M10: SMA3 < SMA10 (baisse courte)"
+        conseil = "🔍 Surveillance SMA"
     
-    full_msg = f"{msg}\n\n💰 Prix: {cp:.{dec}f}\n🕒 {h}H Bénin\n🤖 SMA Bot"
+    full_msg = f"{msg}\n\n💰 Prix: {cp:.{dec}f}\n🕒 {h}:{minute:02d}H Bénin\n🤖 SMA Bot"
     
-    log(f"📤 ENVOI RAPPORT {key}...")
-    send(info["ntfy"], f"{key} - {conseil}", full_msg)
+    log(f"📤 ENVOI RAPPORT {key} - {signal_type}...")
+    send(info["ntfy"], f"{key} - {signal_type}", full_msg)
     
     time.sleep(1)
     
-    # Graphique H4
-    log(f"📤 Graphique H4 pour {key}...")
-    img_h4 = chart_sma(candles_h4, sma3_h4, sma10_h4, f"{info['name']} H4", cp, dec)
-    if img_h4:
-        send(info["ntfy"], f"{key} H4 - {conseil}", "SMA H4 (3,10)", img_h4)
+    # Graphique H2
+    log(f"📤 Graphique H2 pour {key}...")
+    img_h2 = chart_sma(candles_h2, sma3_h2, sma10_h2, f"{info['name']} H2", cp, dec)
+    if img_h2:
+        send(info["ntfy"], f"{key} H2 - {signal_type}", "SMA H2 (3,10)", img_h2)
     
     time.sleep(1)
     
-    # Graphique H1
-    log(f"📤 Graphique H1 pour {key}...")
-    img_h1 = chart_sma(candles_h1, sma3_h1, sma10_h1, f"{info['name']} H1", cp, dec)
-    if img_h1:
-        send(info["ntfy"], f"{key} H1 - {conseil}", "SMA H1 (3,10)", img_h1)
+    # Graphique M10
+    log(f"📤 Graphique M10 pour {key}...")
+    img_m10 = chart_sma(candles_m10, sma3_m10, sma10_m10, f"{info['name']} M10", cp, dec)
+    if img_m10:
+        send(info["ntfy"], f"{key} M10 - {signal_type}", "SMA M10 (3,10)", img_m10)
 
 if __name__ == "__main__":
-    log("🚀 SMA BOT - Stratégie H4 + H1")
+    log("🚀 SMA BOT - Stratégie H2 + M10")
     now = datetime.now(pytz.timezone('Africa/Porto-Novo'))
     h, j = now.hour, now.weekday()
     
