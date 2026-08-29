@@ -42,7 +42,6 @@ def send(url, title, msg, img=None):
             time.sleep(2**i)
     return False
 
-# ===== RÉCUPÉRATION DES DONNÉES =====
 def get_candles_deriv(sym, granularity=60):
     try:
         import websocket as ws_client
@@ -83,7 +82,6 @@ def get_candles(sym, interval="1h", range_days="60d"):
         log(f"❌ Yahoo {sym}: {e}")
         return []
 
-# ===== CALCUL DES MOYENNES MOBILES =====
 def calc_sma(candles, period=3):
     closes = [c["c"] for c in candles]
     if len(closes) < period:
@@ -107,7 +105,6 @@ def detect_cross(sma3, sma10):
         return "BAS", True
     return None, False
 
-# ===== GRAPHIQUE STYLE MT5 =====
 def chart_sma(candles, sma3, sma10, title, price, dec=2):
     if len(candles) < 20:
         return None
@@ -116,18 +113,14 @@ def chart_sma(candles, sma3, sma10, title, price, dec=2):
     fig.patch.set_facecolor('#0a0a0a')
     ax.set_facecolor('#0d1117')
     
-    # Chandeliers japonais
     for i, c in enumerate(candles):
         col = '#26a69a' if c["c"] >= c["o"] else '#ef5350'
         ax.plot([i, i], [c["l"], c["h"]], color=col, lw=1.2)
         ax.add_patch(plt.Rectangle((i-0.35, min(c["o"], c["c"])), 0.7, abs(c["c"]-c["o"]) or 0.0001, facecolor=col, edgecolor=col))
     
-    # SMA 3 (bleue)
     ax.plot(range(len(sma3)), sma3, color='#00b4d8', lw=2, label='SMA 3')
-    # SMA 10 (rouge)
     ax.plot(range(len(sma10)), sma10, color='#ff6b6b', lw=2, label='SMA 10')
     
-    # Prix actuel
     ax.axhline(price, color='#f59e0b', ls='-.', lw=2, alpha=0.7)
     ax.text(len(candles)-1, price, f'  {price:.{dec}f}', color='#f59e0b', fontsize=12, fontweight='bold')
     
@@ -144,14 +137,13 @@ def chart_sma(candles, sma3, sma10, title, price, dec=2):
     plt.close()
     return buf.getvalue()
 
-# ===== ANALYSE PRINCIPALE =====
 def analyze_sma(key, info):
     log(f"🔍 Analyse SMA {key}...")
     
     src = info.get("source", "yahoo")
     if src == "deriv":
-        candles_h2 = get_candles_deriv(info["symbol"], granularity=7200)  # 2 heures
-        candles_m15 = get_candles_deriv(info["symbol"], granularity=900)  # 15 minutes
+        candles_h2 = get_candles_deriv(info["symbol"], granularity=7200)
+        candles_m15 = get_candles_deriv(info["symbol"], granularity=900)
     else:
         candles_h2 = get_candles(info["symbol"], interval="1h", range_days="60d")
         if len(candles_h2) >= 2:
@@ -169,19 +161,14 @@ def analyze_sma(key, info):
         log(f"⚠️ Pas de données pour {key}")
         return
     
-    # Calcul des SMA H2
     sma3_h2 = calc_sma(candles_h2, 3)
     sma10_h2 = calc_sma(candles_h2, 10)
-    
-    # Calcul des SMA M15
     sma3_m15 = calc_sma(candles_m15, 3)
     sma10_m15 = calc_sma(candles_m15, 10)
     
-    # Détection des croisements
     direction_h2, cross_h2 = detect_cross(sma3_h2, sma10_h2)
     direction_m15, cross_m15 = detect_cross(sma3_m15, sma10_m15)
     
-    # Tendance H2 actuelle
     if sma3_h2[-1] is not None and sma10_h2[-1] is not None:
         if sma3_h2[-1] > sma10_h2[-1]:
             tendance_h2 = "HAUSSIERE"
@@ -204,7 +191,6 @@ def analyze_sma(key, info):
     signal_type = ""
     condition_remplie = False
     
-    # Cas 1 : Changement de tendance H2
     if cross_h2:
         if direction_h2 == "HAUT":
             signal_type = "CHANGEMENT TENDANCE HAUSSIERE"
@@ -215,22 +201,16 @@ def analyze_sma(key, info):
             msg = f"📊 Tendance H2 DEVIENT BAISSIERE\n✅ SMA 3 croise en dessous de SMA 10"
             conseil = "🔍 Tendance BAISSIERE confirmée (H2)"
         condition_remplie = True
-    
-    # Cas 2 : Signal d'achat M15 (tendance H2 HAUSSIERE + croisement HAUT M15)
     elif cross_m15 and direction_m15 == "HAUT" and tendance_h2 == "HAUSSIERE":
         signal_type = "SIGNAL ACHAT"
         msg = f"📈 SIGNAL ACHAT SMA\n✅ Tendance HAUSSIERE (H2) confirmée\n✅ SMA 3 croise au-dessus SMA 10 sur M15"
         conseil = "📈 ACHAT (H2 HAUSSIER + M15 HAUT)"
         condition_remplie = True
-    
-    # Cas 3 : Signal de vente M15 (tendance H2 BAISSIERE + croisement BAS M15)
     elif cross_m15 and direction_m15 == "BAS" and tendance_h2 == "BAISSIERE":
         signal_type = "SIGNAL VENTE"
         msg = f"📉 SIGNAL VENTE SMA\n✅ Tendance BAISSIERE (H2) confirmée\n✅ SMA 3 croise en dessous SMA 10 sur M15"
         conseil = "📉 VENTE (H2 BAISSIER + M15 BAS)"
         condition_remplie = True
-    
-    # Cas 4 : Rien ne se passe (mais on envoie quand même un rapport)
     else:
         signal_type = "RAPPORT HORAIRE"
         msg = f"📊 RAPPORT SMA\n📊 Tendance H2: {tendance_icon} {tendance_h2}"
@@ -248,7 +228,6 @@ def analyze_sma(key, info):
     
     time.sleep(1)
     
-    # Graphique H2
     log(f"📤 Graphique H2 pour {key}...")
     img_h2 = chart_sma(candles_h2, sma3_h2, sma10_h2, f"{info['name']} H2", cp, dec)
     if img_h2:
@@ -256,7 +235,6 @@ def analyze_sma(key, info):
     
     time.sleep(1)
     
-    # Graphique M15
     log(f"📤 Graphique M15 pour {key}...")
     img_m15 = chart_sma(candles_m15, sma3_m15, sma10_m15, f"{info['name']} M15", cp, dec)
     if img_m15:
