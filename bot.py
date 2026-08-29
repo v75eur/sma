@@ -164,6 +164,8 @@ def analyze_sma(key, info):
     msg = ""
     conseil = ""
     condition_remplie = False
+
+    # ===== DÉTECTION DES SIGNAL =====
     if cross_h2:
         if direction_h2 == "HAUT":
             conseil = "🔍 Tendance HAUSSIERE confirmée (H2)"
@@ -181,18 +183,26 @@ def analyze_sma(key, info):
         msg = f"📉 SIGNAL VENTE SMA\n✅ Tendance BAISSIERE (H2) confirmée\n✅ SMA 3 croise en dessous SMA 10 sur M15"
         condition_remplie = True
 
+    # ===== SI SIGNAL, ON ENVOIE TEXTE + GRAPHIQUES =====
     if condition_remplie:
-        full_msg = f"{msg}\n\n💰 Prix: {cp:.{dec}f}\n🕒 {datetime.now(pytz.timezone('Africa/Porto-Novo')).hour}H Bénin\n🤖 SMA Bot"
-        log(f"📤 SIGNAL {key} - {conseil}")
+        full_msg = f"{msg}\n\n💰 Prix: {cp:.{dec}f}\n📊 Tendance H2: {tendance_h2}\n🕒 {datetime.now(pytz.timezone('Africa/Porto-Novo')).strftime('%H:%M')}H Bénin\n🤖 SMA Bot"
+        
+        log(f"📤 ENVOI TEXTE {key} - {conseil}")
         send(info["ntfy"], f"🚨 {key} - {conseil}", full_msg)
+        
         time.sleep(1)
+        
+        log(f"📤 Graphique H2 pour {key}...")
         img_h2 = chart_sma(candles_h2, sma3_h2, sma10_h2, f"{info['name']} H2", cp, dec)
         if img_h2:
-            send(info["ntfy"], f"{key} H2", "SMA H2", img_h2)
+            send(info["ntfy"], f"{key} H2 - {conseil}", "SMA H2", img_h2)
+        
         time.sleep(1)
+        
+        log(f"📤 Graphique M15 pour {key}...")
         img_m15 = chart_sma(candles_m15, sma3_m15, sma10_m15, f"{info['name']} M15", cp, dec)
         if img_m15:
-            send(info["ntfy"], f"{key} M15", "SMA M15", img_m15)
+            send(info["ntfy"], f"{key} M15 - {conseil}", "SMA M15", img_m15)
     else:
         log(f"⏭️ SILENCE {key} - Pas de signal SMA")
 
