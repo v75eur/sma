@@ -95,6 +95,19 @@ def calc_sma(candles, period=3):
             sma.append(sum(closes[i-period+1:i+1]) / period)
     return sma
 
+def calc_atr(candles, period=14):
+    if len(candles) < period + 1:
+        return 0.0
+    tr_list = []
+    for i in range(1, len(candles)):
+        h = candles[i]["h"]
+        l = candles[i]["l"]
+        c_prev = candles[i-1]["c"]
+        tr = max(h - l, abs(h - c_prev), abs(l - c_prev))
+        tr_list.append(tr)
+    atr = sum(tr_list[-period:]) / period
+    return atr
+
 def detect_cross(sma3, sma10):
     if len(sma3) < 2 or len(sma10) < 2:
         return None, False
@@ -184,21 +197,29 @@ def analyze_sma(key, info):
         msg = f"SIGNAL VENTE SMA\nTendance BAISSIERE (H2) confirmee\nSMA 3 croise en dessous SMA 10 sur M15"
         condition_remplie = True
 
+    # Sécurité ATR pour filtrer les faux signaux en période de marché plat
+    atr_m15 = calc_atr(candles_m15, 14)
+    seuil_atr_min = 0.00010 if key in ["EURUSD", "GBPUSD"] else (0.5 if key == "XAUUSD" else 5.0)
+
     if condition_remplie:
-        full_msg = f"{msg}\n\nPrix: {cp:.{dec}f}\nTendance H2: {tendance_h2}\n{datetime.now(pytz.timezone('Africa/Porto-Novo')).strftime('%H:%M')}H Benin\nSMA Bot"
-        
+        if atr_m15 < seuil_atr_min:
+            log(f"⏭️ SILENCE {key} - Signal détecté mais ATR trop faible ({atr_m15:.5f}) [Marché plat]")
+            return
+
+        full_msg = f"{msg}\n\nPrix: {cp:.{dec}f}\nTendance H2: {tendance_h2}\nATR: {atr_m15:.{dec}f}\n{datetime.now(pytz.timezone('Africa/Porto-Novo')).strftime('%H:%M')}H Benin\nSMA Bot"
+
         log(f"📤 ENVOI TEXTE {key} - {conseil}")
         send(info["ntfy"], f"ALERTE {key} - {conseil}", full_msg)
-        
+
         time.sleep(1)
-        
+
         log(f"📤 Graphique H2 pour {key}...")
         img_h2 = chart_sma(candles_h2, sma3_h2, sma10_h2, f"{info['name']} H2", cp, dec)
         if img_h2:
             send(info["ntfy"], f"{key} H2 - {conseil}", "SMA H2", img_h2)
-        
+
         time.sleep(1)
-        
+
         log(f"📤 Graphique M15 pour {key}...")
         img_m15 = chart_sma(candles_m15, sma3_m15, sma10_m15, f"{info['name']} M15", cp, dec)
         if img_m15:
