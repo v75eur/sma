@@ -6,6 +6,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
+# ===== CONFIGURATION NTFY =====
 NTFY_XAU = os.getenv("NTFY_XAU", "https://ntfy.sh/rick-xau-sma-secret-2026")
 NTFY_EUR = os.getenv("NTFY_EUR", "https://ntfy.sh/rick-eur-sma-secret-2026")
 NTFY_GBP = os.getenv("NTFY_GBP", "https://ntfy.sh/rick-gbp-sma-secret-2026")
@@ -22,11 +23,9 @@ def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 def send(url, title, msg, img=None):
-    # Supprimer les emojis du titre
-    title_clean = title.replace('🚨', '').replace('📈', '').replace('📉', '').replace('📊', '').replace('🔍', '').strip()
     for i in range(5):
         try:
-            h = {"Title": title_clean}
+            h = {"Title": title}
             if img:
                 h["Filename"] = "chart.png"
                 h["X-Message"] = msg
@@ -83,18 +82,6 @@ def get_candles(sym, interval="1h", range_days="60d"):
         log(f"❌ Yahoo {sym}: {e}")
         return []
 
-def calc_sma(candles, period=3):
-    closes = [c["c"] for c in candles]
-    if len(closes) < period:
-        return [None] * len(closes)
-    sma = []
-    for i in range(len(closes)):
-        if i < period - 1:
-            sma.append(None)
-        else:
-            sma.append(sum(closes[i-period+1:i+1]) / period)
-    return sma
-
 def calc_atr(candles, period=14):
     if len(candles) < period + 1:
         return 0.0
@@ -108,36 +95,39 @@ def calc_atr(candles, period=14):
     atr = sum(tr_list[-period:]) / period
     return atr
 
-def detect_cross(sma3, sma10):
-    if len(sma3) < 2 or len(sma10) < 2:
-        return None, False
-    if sma3[-1] is None or sma10[-1] is None or sma3[-2] is None or sma10[-2] is None:
-        return None, False
-    if sma3[-1] > sma10[-1] and sma3[-2] <= sma10[-2]:
-        return "HAUT", True
-    elif sma3[-1] < sma10[-1] and sma3[-2] >= sma10[-2]:
-        return "BAS", True
-    return None, False
-
-def chart_sma(candles, sma3, sma10, title, price, dec=2):
-    if len(candles) < 20:
+def chart_sma(cd, cp, sma3, sma10, info, title_suffix="", sl_price=None):
+    if len(cd) < 5:
         return None
-    fig, ax = plt.subplots(figsize=(18, 10))
+    name, dec = info["name"], info["dec"]
+    fig, ax = plt.subplots(figsize=(18,10))
     fig.patch.set_facecolor('#0a0a0a')
     ax.set_facecolor('#0d1117')
-    for i, c in enumerate(candles):
-        col = '#26a69a' if c["c"] >= c["o"] else '#ef5350'
-        ax.plot([i, i], [c["l"], c["h"]], color=col, lw=1.2)
-        ax.add_patch(plt.Rectangle((i-0.35, min(c["o"], c["c"])), 0.7, abs(c["c"]-c["o"]) or 0.0001, facecolor=col, edgecolor=col))
-    ax.plot(range(len(sma3)), sma3, color='#00b4d8', lw=2, label='SMA 3')
-    ax.plot(range(len(sma10)), sma10, color='#ff6b6b', lw=2, label='SMA 10')
-    ax.axhline(price, color='#f59e0b', ls='-.', lw=2, alpha=0.7)
-    ax.text(len(candles)-1, price, f'  {price:.{dec}f}', color='#f59e0b', fontsize=12, fontweight='bold')
-    ax.set_title(f"{title} - SMA (3,10)", color='white', fontsize=14, fontweight='bold')
-    ax.set_ylabel("Prix", color='white', fontsize=12)
-    ax.tick_params(colors='white')
-    ax.grid(True, alpha=0.15, color='gray')
-    ax.legend(loc='upper left', facecolor='#1a1a2e', edgecolor='#555', labelcolor='white', framealpha=0.9)
+    for i, c in enumerate(cd):
+        col = '#26a69a' if c["c"]>=c["o"] else '#ef5350'
+        ax.plot([i,i], [c["l"],c["h"]], color=col, lw=1.2)
+        ax.add_patch(plt.Rectangle((i-0.35, min(c["o"],c["c"])), 0.7, abs(c["c"]-c["o"]) or 0.0001, facecolor=col, edgecolor=col))
+    
+    ax.plot(range(len(cd)), sma3, color='#3fb950', lw=2, label='SMA 3')
+    ax.plot(range(len(cd)), sma10, color='#f85149', lw=2, label='SMA 10')
+    
+    ax.axhline(cp, color='#f59e0b', ls='-.', lw=3)
+    ax.text(2, cp, f' Entrée: {cp:.{dec}f}', color='#f59e0b', fontsize=14, va='bottom', fontweight='bold', bbox=dict(boxstyle='round,pad=0.4', facecolor='#1a1400', alpha=0.85))
+
+    if sl_price:
+        ax.axhline(sl_price, color='#ef5350', ls='--', lw=2.5)
+        ax.text(2, sl_price, f' Stop-Loss: {sl_price:.{dec}f}', color='#ef5350', fontsize=14, va='top', fontweight='bold', bbox=dict(boxstyle='round,pad=0.4', facecolor='#1a0a0a', alpha=0.85))
+
+    n = len(cd)
+    step = max(1, n//8)
+    ax.set_xticks(range(0, n, step))
+    ax.set_xticklabels([datetime.fromtimestamp(cd[i]["t"]).strftime('%d/%m\n%Hh') for i in range(0,n,step)], color='white', fontsize=11)
+    ax.set_title(f"  {name} {title_suffix} — SMA 3/10 Croisement | Prix: {cp:.{dec}f}", color='white', fontsize=16, fontweight='bold', pad=15)
+    ax.set_ylabel("Prix", color='white', fontsize=13)
+    ax.tick_params(colors='white', labelsize=11)
+    ax.grid(True, alpha=0.12, color='gray')
+    for sp in ax.spines.values():
+        sp.set_color('#333333')
+    ax.legend(loc='upper left', facecolor='#1a1a2e', edgecolor='#555', labelcolor='white', fontsize=12, framealpha=0.9)
     plt.tight_layout(pad=1.5)
     buf = io.BytesIO()
     plt.savefig(buf, format='png', dpi=130, facecolor='#0a0a0a')
@@ -148,6 +138,7 @@ def chart_sma(candles, sma3, sma10, title, price, dec=2):
 def analyze_sma(key, info):
     log(f"🔍 Analyse SMA {key}...")
     src = info.get("source", "yahoo")
+
     if src == "deriv":
         candles_h2 = get_candles_deriv(info["symbol"], granularity=7200)
         candles_m15 = get_candles_deriv(info["symbol"], granularity=900)
@@ -160,79 +151,86 @@ def analyze_sma(key, info):
             resampled = df.resample('2H').agg({'o': 'first', 'h': 'max', 'l': 'min', 'c': 'last'}).dropna()
             candles_h2 = [{"t": int(ts.timestamp()), "o": row['o'], "h": row['h'], "l": row['l'], "c": row['c']} for ts, row in resampled.iterrows()]
             candles_h2 = candles_h2[-50:]
-        candles_m15 = get_candles(info["symbol"], interval="15m", range_days="7d")
+        candles_m15 = get_candles(info["symbol"], interval="15m", range_days="3d")
+
     if not candles_h2 or not candles_m15:
         log(f"⚠️ Pas de données pour {key}")
         return
-    sma3_h2 = calc_sma(candles_h2, 3)
-    sma10_h2 = calc_sma(candles_h2, 10)
-    sma3_m15 = calc_sma(candles_m15, 3)
-    sma10_m15 = calc_sma(candles_m15, 10)
-    direction_h2, cross_h2 = detect_cross(sma3_h2, sma10_h2)
-    direction_m15, cross_m15 = detect_cross(sma3_m15, sma10_m15)
-    if sma3_h2[-1] is not None and sma10_h2[-1] is not None:
-        tendance_h2 = "HAUSSIERE" if sma3_h2[-1] > sma10_h2[-1] else "BAISSIERE"
-    else:
-        tendance_h2 = "NEUTRE"
-    dec = info["dec"]
+
+    closes_h2 = pd.Series([c["c"] for c in candles_h2])
+    sma3_h2 = closes_h2.rolling(3).mean().values
+    sma10_h2 = closes_h2.rolling(10).mean().values
+
+    closes_m15 = pd.Series([c["c"] for c in candles_m15])
+    sma3_m15 = closes_m15.rolling(3).mean().values
+    sma10_m15 = closes_m15.rolling(10).mean().values
+
     cp = candles_m15[-1]["c"]
-    msg = ""
-    conseil = ""
-    condition_remplie = False
-
-    if cross_h2:
-        if direction_h2 == "HAUT":
-            conseil = "Tendance HAUSSIERE confirmee (H2)"
-            msg = f"Tendance H2 DEVIENT HAUSSIERE\nSMA 3 croise au-dessus de SMA 10"
-        elif direction_h2 == "BAS":
-            conseil = "Tendance BAISSIERE confirmee (H2)"
-            msg = f"Tendance H2 DEVIENT BAISSIERE\nSMA 3 croise en dessous de SMA 10"
-        condition_remplie = True
-    elif cross_m15 and direction_m15 == "HAUT" and tendance_h2 == "HAUSSIERE":
-        conseil = "ACHAT (H2 HAUSSIER + M15 HAUT)"
-        msg = f"SIGNAL ACHAT SMA\nTendance HAUSSIERE (H2) confirmee\nSMA 3 croise au-dessus SMA 10 sur M15"
-        condition_remplie = True
-    elif cross_m15 and direction_m15 == "BAS" and tendance_h2 == "BAISSIERE":
-        conseil = "VENTE (H2 BAISSIER + M15 BAS)"
-        msg = f"SIGNAL VENTE SMA\nTendance BAISSIERE (H2) confirmee\nSMA 3 croise en dessous SMA 10 sur M15"
-        condition_remplie = True
-
-    # Sécurité ATR pour filtrer les faux signaux en période de marché plat
+    dec = info["dec"]
     atr_m15 = calc_atr(candles_m15, 14)
-    seuil_atr_min = 0.00010 if key in ["EURUSD", "GBPUSD"] else (0.5 if key == "XAUUSD" else 5.0)
+    seuil_atr_min = 0.00008 if key in ["EURUSD", "GBPUSD"] else (0.4 if key == "XAUUSD" else 4.0)
+
+    tendance_h2 = "LATERALE"
+    if len(sma3_h2) >= 2 and len(sma10_h2) >= 2:
+        if sma3_h2[-1] > sma10_h2[-1]:
+            tendance_h2 = "HAUSSIERE"
+        elif sma3_h2[-1] < sma10_h2[-1]:
+            tendance_h2 = "BAISSIERE"
+
+    condition_remplie = False
+    conseil = ""
+    msg = ""
+    sl_price = 0.0
+    tolerance = 0.0004 if key in ["EURUSD", "GBPUSD"] else (1.0 if key == "XAUUSD" else 10.0)
+
+    if len(sma3_m15) >= 2 and len(sma10_m15) >= 2:
+        cross_up = sma3_m15[-2] <= sma10_m15[-2] and sma3_m15[-1] > sma10_m15[-1]
+        cross_down = sma3_m15[-2] >= sma10_m15[-2] and sma3_m15[-1] < sma10_m15[-1]
+
+        if cross_up and tendance_h2 == "HAUSSIERE":
+            condition_remplie = True
+            recent_low = min([c["l"] for c in candles_m15[-5:]])
+            sl_price = recent_low - tolerance
+            conseil = "ACHAT (SMA 3/10 Croisement Haussier + H2 Haussier)"
+            msg = f"SIGNAL ACHAT SMA\nH2: HAUSSIERE | Croisement M15 valide\nEntree approx: {cp:.{dec}f}\n🛑 Stop-Loss Tolérable: {sl_price:.{dec}f}"
+
+        elif cross_down and tendance_h2 == "BAISSIERE":
+            condition_remplie = True
+            recent_high = max([c["h"] for c in candles_m15[-5:]])
+            sl_price = recent_high + tolerance
+            conseil = "VENTE (SMA 3/10 Croisement Baissier + H2 Baissier)"
+            msg = f"SIGNAL VENTE SMA\nH2: BAISSIERE | Croisement M15 valide\nEntree approx: {cp:.{dec}f}\n🛑 Stop-Loss Tolérable: {sl_price:.{dec}f}"
 
     if condition_remplie:
         if atr_m15 < seuil_atr_min:
-            log(f"⏭️ SILENCE {key} - Signal détecté mais ATR trop faible ({atr_m15:.5f}) [Marché plat]")
+            log(f"⏭️ SILENCE {key} - Signal SMA détecté mais ATR M15 trop faible ({atr_m15:.5f}) [Marché plat]")
             return
 
-        full_msg = f"{msg}\n\nPrix: {cp:.{dec}f}\nTendance H2: {tendance_h2}\nATR: {atr_m15:.{dec}f}\n{datetime.now(pytz.timezone('Africa/Porto-Novo')).strftime('%H:%M')}H Benin\nSMA Bot"
+        full_msg = f"{msg}\n\nPrix M15: {cp:.{dec}f}\nTendance H2: {tendance_h2}\nATR M15: {atr_m15:.{dec}f}\n{datetime.now(pytz.timezone('Africa/Porto-Novo')).strftime('%H:%M')}H Benin\nSMA Bot Pro"
 
-        log(f"📤 ENVOI TEXTE {key} - {conseil}")
+        log(f"📤 SIGNAL {key} - {conseil}")
         send(info["ntfy"], f"ALERTE {key} - {conseil}", full_msg)
 
-        time.sleep(1)
-
-        log(f"📤 Graphique H2 pour {key}...")
-        img_h2 = chart_sma(candles_h2, sma3_h2, sma10_h2, f"{info['name']} H2", cp, dec)
+        img_h2 = chart_sma(candles_h2, cp, sma3_h2, sma10_h2, info, "H2", sl_price)
         if img_h2:
+            time.sleep(1)
             send(info["ntfy"], f"{key} H2 - {conseil}", "SMA H2", img_h2)
 
-        time.sleep(1)
-
-        log(f"📤 Graphique M15 pour {key}...")
-        img_m15 = chart_sma(candles_m15, sma3_m15, sma10_m15, f"{info['name']} M15", cp, dec)
+        img_m15 = chart_sma(candles_m15, cp, sma3_m15, sma10_m15, info, "M15 Trigger", sl_price)
         if img_m15:
-            send(info["ntfy"], f"{key} M15 - {conseil}", "SMA M15", img_m15)
+            time.sleep(1)
+            send(info["ntfy"], f"{key} M15 - Trigger & SL", "SMA M15", img_m15)
     else:
-        log(f"⏭️ SILENCE {key} - Pas de signal SMA")
+        log(f"⏭️ SILENCE {key} - Pas de croisement SMA valide (H2:{tendance_h2})")
 
 if __name__ == "__main__":
-    log("🚀 SMA BOT - Strategie H2 + M15")
+    log("🚀 SMA BOT PRO - Croisement 3/10 (H2 + M15 + ATR + SL)")
     now = datetime.now(pytz.timezone('Africa/Porto-Novo'))
     h, j = now.hour, now.weekday()
+
     log("→ V75 (7j/7)")
     analyze_sma("V75", PAIRS["V75"])
+
     if j < 5:
         log(f"📊 Analyse Forex {h}H")
         for key in ["XAUUSD", "EURUSD", "GBPUSD"]:
@@ -240,4 +238,5 @@ if __name__ == "__main__":
             analyze_sma(key, PAIRS[key])
     else:
         log(f"💤 Forex ferme week-end")
+
     log("✅ Termine")
