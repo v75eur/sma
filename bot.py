@@ -136,11 +136,12 @@ def chart_sma(cd, cp, sma3, sma10, info, title_suffix="", sl_price=None):
     return buf.getvalue()
 
 def analyze_sma(key, info):
-    log(f"🔍 Analyse SMA {key}...")
+    log(f"🔍 Analyse SMA Multi-TF (H2 + H1 + M15) {key}...")
     src = info.get("source", "yahoo")
 
     if src == "deriv":
         candles_h2 = get_candles_deriv(info["symbol"], granularity=7200)
+        candles_h1 = get_candles_deriv(info["symbol"], granularity=3600)
         candles_m15 = get_candles_deriv(info["symbol"], granularity=900)
     else:
         candles_h2 = get_candles(info["symbol"], interval="1h", range_days="60d")
@@ -151,15 +152,21 @@ def analyze_sma(key, info):
             resampled = df.resample('2H').agg({'o': 'first', 'h': 'max', 'l': 'min', 'c': 'last'}).dropna()
             candles_h2 = [{"t": int(ts.timestamp()), "o": row['o'], "h": row['h'], "l": row['l'], "c": row['c']} for ts, row in resampled.iterrows()]
             candles_h2 = candles_h2[-50:]
+        candles_h1 = get_candles(info["symbol"], interval="1h", range_days="7d")
         candles_m15 = get_candles(info["symbol"], interval="15m", range_days="3d")
 
-    if not candles_h2 or not candles_m15:
+    if not candles_h2 or not candles_h1 or not candles_m15:
         log(f"⚠️ Pas de données pour {key}")
         return
 
+    # Calcul des SMA
     closes_h2 = pd.Series([c["c"] for c in candles_h2])
     sma3_h2 = closes_h2.rolling(3).mean().values
     sma10_h2 = closes_h2.rolling(10).mean().values
+
+    closes_h1 = pd.Series([c["c"] for c in candles_h1])
+    sma3_h1 = closes_h1.rolling(3).mean().values
+    sma10_h1 = closes_h1.rolling(10).mean().values
 
     closes_m15 = pd.Series([c["c"] for c in candles_m15])
     sma3_m15 = closes_m15.rolling(3).mean().values
@@ -170,12 +177,16 @@ def analyze_sma(key, info):
     atr_m15 = calc_atr(candles_m15, 14)
     seuil_atr_min = 0.00008 if key in ["EURUSD", "GBPUSD"] else (0.4 if key == "XAUUSD" else 4.0)
 
+    # Tendances H2 et H1
     tendance_h2 = "LATERALE"
     if len(sma3_h2) >= 2 and len(sma10_h2) >= 2:
-        if sma3_h2[-1] > sma10_h2[-1]:
-            tendance_h2 = "HAUSSIERE"
-        elif sma3_h2[-1] < sma10_h2[-1]:
-            tendance_h2 = "BAISSIERE"
+        if sma3_h2[-1] > sma10_h2[-1]: tendance_h2 = "HAUSSIERE"
+        elif sma3_h2[-1] < sma10_h2[-1]: tendance_h2 = "BAISSIERE"
+
+    tendance_h1 = "LATERALE"
+    if len(sma3_h1) >= 2 and len(sma10_h1) >= 2:
+        if sma3_h1[-1] > sma10_h1[-1]: tendance_h1 = "HAUSSIERE"
+        elif sma3_h1[-1] < sma10_h1[-1]: tendance_h1 = "BAISSIERE"
 
     condition_remplie = False
     conseil = ""
@@ -187,44 +198,45 @@ def analyze_sma(key, info):
         cross_up = sma3_m15[-2] <= sma10_m15[-2] and sma3_m15[-1] > sma10_m15[-1]
         cross_down = sma3_m15[-2] >= sma10_m15[-2] and sma3_m15[-1] < sma10_m15[-1]
 
-        if cross_up and tendance_h2 == "HAUSSIERE":
+        # Condition stricte : H2 et H1 doivent être d'accord avec le signal M15
+        if cross_up and tendance_h2 == "HAUSSIERE" and tendance_h1 == "HAUSSIERE":
             condition_remplie = True
             recent_low = min([c["l"] for c in candles_m15[-5:]])
             sl_price = recent_low - tolerance
-            conseil = "ACHAT (SMA 3/10 Croisement Haussier + H2 Haussier)"
-            msg = f"SIGNAL ACHAT SMA\nH2: HAUSSIERE | Croisement M15 valide\nEntree approx: {cp:.{dec}f}\n🛑 Stop-Loss Tolérable: {sl_price:.{dec}f}"
+            conseil = "ACHAT (SMA H2+H1 Haussier + M15 Cross)"
+            msg = f"SIGNAL ACHAT SMA PRO\nH2 & H1: HAUSSIERES | M15 Valide\nEntree approx: {cp:.{dec}f}\n🛑 Stop-Loss Tolérable: {sl_price:.{dec}f}"
 
-        elif cross_down and tendance_h2 == "BAISSIERE":
+        elif cross_down and tendance_h2 == "BAISSIERE" and tendance_h1 == "BAISSIERE":
             condition_remplie = True
             recent_high = max([c["h"] for c in candles_m15[-5:]])
             sl_price = recent_high + tolerance
-            conseil = "VENTE (SMA 3/10 Croisement Baissier + H2 Baissier)"
-            msg = f"SIGNAL VENTE SMA\nH2: BAISSIERE | Croisement M15 valide\nEntree approx: {cp:.{dec}f}\n🛑 Stop-Loss Tolérable: {sl_price:.{dec}f}"
+            conseil = "VENTE (SMA H2+H1 Baissier + M15 Cross)"
+            msg = f"SIGNAL VENTE SMA PRO\nH2 & H1: BAISSIERES | M15 Valide\nEntree approx: {cp:.{dec}f}\n🛑 Stop-Loss Tolérable: {sl_price:.{dec}f}"
 
     if condition_remplie:
         if atr_m15 < seuil_atr_min:
-            log(f"⏭️ SILENCE {key} - Signal SMA détecté mais ATR M15 trop faible ({atr_m15:.5f}) [Marché plat]")
+            log(f"⏭️ SILENCE {key} - Signal détecté mais ATR M15 trop faible ({atr_m15:.5f}) [Marché plat]")
             return
 
-        full_msg = f"{msg}\n\nPrix M15: {cp:.{dec}f}\nTendance H2: {tendance_h2}\nATR M15: {atr_m15:.{dec}f}\n{datetime.now(pytz.timezone('Africa/Porto-Novo')).strftime('%H:%M')}H Benin\nSMA Bot Pro"
+        full_msg = f"{msg}\n\nPrix M15: {cp:.{dec}f}\nTendance H2: {tendance_h2} | H1: {tendance_h1}\nATR M15: {atr_m15:.{dec}f}\n{datetime.now(pytz.timezone('Africa/Porto-Novo')).strftime('%H:%M')}H Benin\nSMA Bot Pro Multi-TF"
 
         log(f"📤 SIGNAL {key} - {conseil}")
         send(info["ntfy"], f"ALERTE {key} - {conseil}", full_msg)
 
-        img_h2 = chart_sma(candles_h2, cp, sma3_h2, sma10_h2, info, "H2", sl_price)
-        if img_h2:
+        img_h1 = chart_sma(candles_h1, cp, sma3_h1, sma10_h1, info, "H1 Trend", sl_price)
+        if img_h1:
             time.sleep(1)
-            send(info["ntfy"], f"{key} H2 - {conseil}", "SMA H2", img_h2)
+            send(info["ntfy"], f"{key} H1 - Trend", "SMA H1", img_h1)
 
         img_m15 = chart_sma(candles_m15, cp, sma3_m15, sma10_m15, info, "M15 Trigger", sl_price)
         if img_m15:
             time.sleep(1)
             send(info["ntfy"], f"{key} M15 - Trigger & SL", "SMA M15", img_m15)
     else:
-        log(f"⏭️ SILENCE {key} - Pas de croisement SMA valide (H2:{tendance_h2})")
+        log(f"⏭️ SILENCE {key} - Pas de consensus SMA (H2:{tendance_h2} | H1:{tendance_h1})")
 
 if __name__ == "__main__":
-    log("🚀 SMA BOT PRO - Croisement 3/10 (H2 + M15 + ATR + SL)")
+    log("🚀 SMA BOT PRO - Croisement 3/10 (H2 + H1 + M15 + ATR + SL)")
     now = datetime.now(pytz.timezone('Africa/Porto-Novo'))
     h, j = now.hour, now.weekday()
 
