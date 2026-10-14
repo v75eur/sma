@@ -121,7 +121,7 @@ def chart_sma(cd, cp, sma3, sma10, info, title_suffix="", sl_price=None):
     step = max(1, n//8)
     ax.set_xticks(range(0, n, step))
     ax.set_xticklabels([datetime.fromtimestamp(cd[i]["t"]).strftime('%d/%m\n%Hh') for i in range(0,n,step)], color='white', fontsize=11)
-    ax.set_title(f"  {name} {title_suffix} — SMA 3/10 Croisement | Prix: {cp:.{dec}f}", color='white', fontsize=16, fontweight='bold', pad=15)
+    ax.set_title(f"  {name} {title_suffix} — SMA Pro (H2+H1+M15 + M5 Continuation) | Prix: {cp:.{dec}f}", color='white', fontsize=16, fontweight='bold', pad=15)
     ax.set_ylabel("Prix", color='white', fontsize=13)
     ax.tick_params(colors='white', labelsize=11)
     ax.grid(True, alpha=0.12, color='gray')
@@ -136,13 +136,14 @@ def chart_sma(cd, cp, sma3, sma10, info, title_suffix="", sl_price=None):
     return buf.getvalue()
 
 def analyze_sma(key, info):
-    log(f"🔍 Analyse SMA Multi-TF (H2 + H1 + M15) {key}...")
+    log(f"🔍 Analyse SMA Multi-TF (H2+H1+M15) + M5 Continuation {key}...")
     src = info.get("source", "yahoo")
 
     if src == "deriv":
         candles_h2 = get_candles_deriv(info["symbol"], granularity=7200)
         candles_h1 = get_candles_deriv(info["symbol"], granularity=3600)
         candles_m15 = get_candles_deriv(info["symbol"], granularity=900)
+        candles_m5 = get_candles_deriv(info["symbol"], granularity=300)
     else:
         candles_h2 = get_candles(info["symbol"], interval="1h", range_days="60d")
         if len(candles_h2) >= 2:
@@ -154,12 +155,13 @@ def analyze_sma(key, info):
             candles_h2 = candles_h2[-50:]
         candles_h1 = get_candles(info["symbol"], interval="1h", range_days="7d")
         candles_m15 = get_candles(info["symbol"], interval="15m", range_days="3d")
+        candles_m5 = get_candles(info["symbol"], interval="5m", range_days="2d")
 
-    if not candles_h2 or not candles_h1 or not candles_m15:
-        log(f"⚠️ Pas de données pour {key}")
+    if not candles_h2 or not candles_h1 or not candles_m15 or not candles_m5:
+        log(f"⚠️ Pas de données suffisantes pour {key}")
         return
 
-    # Calcul des SMA
+    # Calcul des SMA pour H2, H1, M15
     closes_h2 = pd.Series([c["c"] for c in candles_h2])
     sma3_h2 = closes_h2.rolling(3).mean().values
     sma10_h2 = closes_h2.rolling(10).mean().values
@@ -172,12 +174,12 @@ def analyze_sma(key, info):
     sma3_m15 = closes_m15.rolling(3).mean().values
     sma10_m15 = closes_m15.rolling(10).mean().values
 
-    cp = candles_m15[-1]["c"]
+    cp = candles_m5[-1]["c"]
     dec = info["dec"]
-    atr_m15 = calc_atr(candles_m15, 14)
+    atr_m5 = calc_atr(candles_m5, 14)
     seuil_atr_min = 0.00008 if key in ["EURUSD", "GBPUSD"] else (0.4 if key == "XAUUSD" else 4.0)
 
-    # Tendances H2 et H1
+    # Détermination des tendances H2, H1, M15
     tendance_h2 = "LATERALE"
     if len(sma3_h2) >= 2 and len(sma10_h2) >= 2:
         if sma3_h2[-1] > sma10_h2[-1]: tendance_h2 = "HAUSSIERE"
@@ -188,37 +190,49 @@ def analyze_sma(key, info):
         if sma3_h1[-1] > sma10_h1[-1]: tendance_h1 = "HAUSSIERE"
         elif sma3_h1[-1] < sma10_h1[-1]: tendance_h1 = "BAISSIERE"
 
+    tendance_m15 = "LATERALE"
+    if len(sma3_m15) >= 2 and len(sma10_m15) >= 2:
+        if sma3_m15[-1] > sma10_m15[-1]: tendance_m15 = "HAUSSIERE"
+        elif sma3_m15[-1] < sma10_m15[-1]: tendance_m15 = "BAISSIERE"
+
     condition_remplie = False
     conseil = ""
     msg = ""
     sl_price = 0.0
     tolerance = 0.0004 if key in ["EURUSD", "GBPUSD"] else (1.0 if key == "XAUUSD" else 10.0)
 
-    if len(sma3_m15) >= 2 and len(sma10_m15) >= 2:
-        cross_up = sma3_m15[-2] <= sma10_m15[-2] and sma3_m15[-1] > sma10_m15[-1]
-        cross_down = sma3_m15[-2] >= sma10_m15[-2] and sma3_m15[-1] < sma10_m15[-1]
+    if len(candles_m5) >= 2:
+        dernière_bougie_m5 = candles_m5[-1]
+        corps_m5 = abs(dernière_bougie_m5["c"] - dernière_bougie_m5["o"])
+        # Une longue bougie de continuation M5 dont le corps dépasse 1.3 fois l'ATR M5
+        est_longue_continuation_m5 = corps_m5 > (atr_m5 * 1.3)
+        m5_haussiere = dernière_bougie_m5["c"] > dernière_bougie_m5["o"]
+        m5_baissiere = dernière_bougie_m5["c"] < dernière_bougie_m5["o"]
 
-        # Condition stricte : H2 et H1 doivent être d'accord avec le signal M15
-        if cross_up and tendance_h2 == "HAUSSIERE" and tendance_h1 == "HAUSSIERE":
+        # CONDITION ACHAT : H2 + H1 + M15 tous haussiers + Bougie M5 de continuation haussière
+        if (tendance_h2 == "HAUSSIERE" and tendance_h1 == "HAUSSIERE" and tendance_m15 == "HAUSSIERE" 
+            and est_longue_continuation_m5 and m5_haussiere):
             condition_remplie = True
-            recent_low = min([c["l"] for c in candles_m15[-5:]])
+            recent_low = min([c["l"] for c in candles_m5[-5:]])
             sl_price = recent_low - tolerance
-            conseil = "ACHAT (SMA H2+H1 Haussier + M15 Cross)"
-            msg = f"SIGNAL ACHAT SMA PRO\nH2 & H1: HAUSSIERES | M15 Valide\nEntree approx: {cp:.{dec}f}\n🛑 Stop-Loss Tolérable: {sl_price:.{dec}f}"
+            conseil = "ACHAT (Alignement H2+H1+M15 + M5 Continuation)"
+            msg = f"SIGNAL ACHAT SMA PRO\nTendance globale H2+H1+M15: HAUSSIERE\nDéclencheur M5: Longue bougie de continuation\nEntree approx: {cp:.{dec}f}\n🛑 Stop-Loss Tolérable: {sl_price:.{dec}f}"
 
-        elif cross_down and tendance_h2 == "BAISSIERE" and tendance_h1 == "BAISSIERE":
+        # CONDITION VENTE : H2 + H1 + M15 tous baissiers + Bougie M5 de continuation baissière
+        elif (tendance_h2 == "BAISSIERE" and tendance_h1 == "BAISSIERE" and tendance_m15 == "BAISSIERE" 
+              and est_longue_continuation_m5 and m5_baissiere):
             condition_remplie = True
-            recent_high = max([c["h"] for c in candles_m15[-5:]])
+            recent_high = max([c["h"] for c in candles_m5[-5:]])
             sl_price = recent_high + tolerance
-            conseil = "VENTE (SMA H2+H1 Baissier + M15 Cross)"
-            msg = f"SIGNAL VENTE SMA PRO\nH2 & H1: BAISSIERES | M15 Valide\nEntree approx: {cp:.{dec}f}\n🛑 Stop-Loss Tolérable: {sl_price:.{dec}f}"
+            conseil = "VENTE (Alignement H2+H1+M15 + M5 Continuation)"
+            msg = f"SIGNAL VENTE SMA PRO\nTendance globale H2+H1+M15: BAISSIERE\nDéclencheur M5: Longue bougie de continuation\nEntree approx: {cp:.{dec}f}\n🛑 Stop-Loss Tolérable: {sl_price:.{dec}f}"
 
     if condition_remplie:
-        if atr_m15 < seuil_atr_min:
-            log(f"⏭️ SILENCE {key} - Signal détecté mais ATR M15 trop faible ({atr_m15:.5f}) [Marché plat]")
+        if atr_m5 < seuil_atr_min:
+            log(f"⏭️ SILENCE {key} - Signal détecté mais ATR M5 trop faible ({atr_m5:.5f}) [Marché plat]")
             return
 
-        full_msg = f"{msg}\n\nPrix M15: {cp:.{dec}f}\nTendance H2: {tendance_h2} | H1: {tendance_h1}\nATR M15: {atr_m15:.{dec}f}\n{datetime.now(pytz.timezone('Africa/Porto-Novo')).strftime('%H:%M')}H Benin\nSMA Bot Pro Multi-TF"
+        full_msg = f"{msg}\n\nPrix M5: {cp:.{dec}f}\nTendance H2:{tendance_h2} | H1:{tendance_h1} | M15:{tendance_m15}\nATR M5: {atr_m5:.{dec}f}\n{datetime.now(pytz.timezone('Africa/Porto-Novo')).strftime('%H:%M')}H Benin\nSMA Bot Pro Multi-TF Ultimate"
 
         log(f"📤 SIGNAL {key} - {conseil}")
         send(info["ntfy"], f"ALERTE {key} - {conseil}", full_msg)
@@ -228,15 +242,15 @@ def analyze_sma(key, info):
             time.sleep(1)
             send(info["ntfy"], f"{key} H1 - Trend", "SMA H1", img_h1)
 
-        img_m15 = chart_sma(candles_m15, cp, sma3_m15, sma10_m15, info, "M15 Trigger", sl_price)
-        if img_m15:
+        img_m5 = chart_sma(candles_m5, cp, sma3_m15[-len(candles_m5):] if len(sma3_m15)>=len(candles_m5) else sma3_h1, sma3_h1, info, "M5 Trigger Continuation", sl_price)
+        if img_m5:
             time.sleep(1)
-            send(info["ntfy"], f"{key} M15 - Trigger & SL", "SMA M15", img_m15)
+            send(info["ntfy"], f"{key} M5 - Continuation & SL", "SMA M5", img_m5)
     else:
-        log(f"⏭️ SILENCE {key} - Pas de consensus SMA (H2:{tendance_h2} | H1:{tendance_h1})")
+        log(f"⏭️ SILENCE {key} - Pas d'alignement complet (H2:{tendance_h2} | H1:{tendance_h1} | M15:{tendance_m15})")
 
 if __name__ == "__main__":
-    log("🚀 SMA BOT PRO - Croisement 3/10 (H2 + H1 + M15 + ATR + SL)")
+    log("🚀 SMA BOT PRO ULTIMATE - H2+H1+M15 Alignés + M5 Continuation + SL")
     now = datetime.now(pytz.timezone('Africa/Porto-Novo'))
     h, j = now.hour, now.weekday()
 
